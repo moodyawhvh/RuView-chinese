@@ -1,61 +1,53 @@
-# Security notes — wifi-densepose-sensing-server
+> 🌐 本文档由 [ruvnet/RuView](https://github.com/ruvnet/RuView) 翻译,英文原版见原项目。
 
-## UDP CSI data plane (ADR-296)
+# 安全说明 —— wifi-densepose-sensing-server
 
-The sensing server ingests CSI/radar frames over UDP from ESP32, MediaTek,
-Qualcomm, and RTL8720F sensor nodes. A valid-shaped frame flips an
-auto-detecting server into a live source state and influences
-presence/vital/automation outputs.
+## UDP CSI 数据平面(ADR-296)
 
-### Threat model
+感知服务器通过 UDP 从 ESP32、联发科、高通和 RTL8720F 传感节点接入 CSI/雷达帧。
+一帧形状合法的数据就能把自动探测中的服务器切到活跃数据源状态,并影响
+在场/生命体征/自动化输出。
 
-Any host that can reach the UDP port can inject a valid-shaped frame. Prior to
-ADR-296 the receiver bound `0.0.0.0` unconditionally, so on a routable
-deployment the data plane was open to the entire LAN.
+### 威胁模型
 
-The controls in ADR-296 (step one) are:
+任何能访问该 UDP 端口的主机都可以注入形状合法的帧。在 ADR-296 之前,接收器无条件
+绑定 `0.0.0.0`,因此在可路由部署中,整个局域网都能触达数据平面。
 
-- **`--udp-bind` (env `RUVIEW_UDP_BIND`), default `127.0.0.1`.** The receiver is
-  loopback-only by default and not reachable off-host. Binding to a routable
-  address (`0.0.0.0` or a LAN IP) is now an explicit operator choice, mirroring
-  the HTTP `--bind-addr` path.
-- **`--udp-allow <IP/CIDR,...>` (env `RUVIEW_UDP_ALLOW`).** An optional source
-  allowlist. When set, frames from non-matching sources are dropped and counted;
-  loopback is always allowed.
-- **`--udp-insecure-lan` (env `RUVIEW_UDP_INSECURE_LAN`).** A routable bind with
-  no allowlist is *refused at boot* unless this override is passed. The name
-  makes the residual risk legible.
+ADR-296(第一步)提供的控制项:
 
-A startup security log line states the resolved bind scope and whether an
-allowlist is active.
+- **`--udp-bind`(环境变量 `RUVIEW_UDP_BIND`),默认 `127.0.0.1`。** 接收器默认
+  仅绑定回环地址,主机外不可达。绑定到可路由地址(`0.0.0.0` 或局域网 IP)现在是
+  操作者的显式选择,与 HTTP 的 `--bind-addr` 路径一致。
+- **`--udp-allow <IP/CIDR,...>`(环境变量 `RUVIEW_UDP_ALLOW`)。** 可选的来源白名单。
+  设置后,来自不匹配来源的帧会被丢弃并计数;回环地址始终放行。
+- **`--udp-insecure-lan`(环境变量 `RUVIEW_UDP_INSECURE_LAN`)。** 可路由绑定且无
+  白名单的配置在启动时会被*直接拒绝*,除非传入该覆盖开关。开关名称本身就在提醒
+  残余风险。
 
-### Residual risk — the allowlist is not authentication
+启动时会输出一条安全日志,说明最终生效的绑定范围以及白名单是否启用。
 
-An IP/CIDR allowlist restricts *which addresses* may deliver frames. It does
-**not** authenticate the sender. On a trusted LAN an attacker who can spoof a
-source IP, or who controls an allowlisted host, can still inject frames. Treat a
-routable bind as a soft control, not a security boundary.
+### 残余风险——白名单不是身份认证
 
-### Deferred to a follow-up ADR (step two)
+IP/CIDR 白名单限制的是*哪些地址*可以投递帧。它**不**对发送方做认证。在可信局域网
+中,能够伪造源 IP、或控制了白名单内主机的攻击者,依然可以注入帧。请把可路由绑定
+当作软性控制,而不是安全边界。
 
-The following are **not** implemented yet and the data plane must not be
-presented as authenticated:
+### 留待后续 ADR 处理(第二步)
 
-- per-device provisioned keys
-- message authentication / AEAD (MAC over each frame)
-- device identifiers
-- monotonic sequence numbers
-- a freshness window
-- replay rejection
+以下能力**尚未**实现,不得把数据平面宣传为已认证:
 
-Real-silicon validation of the LAN path remains required before any deployment
-claim.
+- 每设备预置密钥
+- 消息认证 / AEAD(对每帧做 MAC)
+- 设备标识符
+- 单调递增序列号
+- 新鲜度窗口
+- 重放拒绝
 
-### Safe deployment
+在任何部署声明之前,局域网路径仍必须完成真实芯片验证。
 
-- Prefer the loopback default. Co-locate sensor decoding on the same host, or
-  place a trusted gateway in front.
-- If you must bind routable, always pass `--udp-allow` scoped to the sensor
-  subnet, and segregate sensors on their own VLAN.
-- Do not rely on the allowlist alone against an on-LAN adversary until step two
-  ships.
+### 安全部署建议
+
+- 优先使用回环默认值。把传感解码放在同一台主机上,或在其前面部署可信网关。
+- 如果必须绑定可路由地址,务必传入限定在传感器子网范围内的 `--udp-allow`,并把
+  传感器隔离在独立 VLAN。
+- 在第二步落地之前,不要指望白名单单独对抗局域网内的对手。

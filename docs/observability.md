@@ -1,94 +1,85 @@
-# Observability: OTLP log export
+> 🌐 本文档由 [ruvnet/RuView](https://github.com/ruvnet/RuView) 翻译,英文原版见原项目。
 
-The sensing server can export every `tracing` log event as an
-OpenTelemetry log record over OTLP, with a curated set of sensing events
-(presence transitions, vitals estimates, node online/offline, fall
-detections, CSI capture stats, MQTT errors, model loads) carrying
-registry-backed event names and attributes under the `ruview.*`
-namespace.
+# 可观测性:OTLP 日志导出
 
-## The event registry
+感知服务器可以把每一条 `tracing` 日志事件作为 OpenTelemetry 日志记录经 OTLP 导出,
+其中一组精选的感知事件(在场状态切换、生命体征估计、节点上线/离线、跌倒检测、
+CSI 采集统计、MQTT 错误、模型加载)在 `ruview.*` 命名空间下携带由注册表支撑的
+事件名与属性。
 
-The names are not ad hoc: they are defined in a weaver-validated
-semantic-conventions registry at `semconv/registry/` (attributes and log
-event names, OpenTelemetry registry format). The Rust constants module
-`v2/crates/wifi-densepose-sensing-server/src/semconv.rs` is **generated**
-from that registry (`weaver registry generate`, template under
-`templates/registry/rust/`) and CI (`.github/workflows/semconv.yml`)
-fails if either the registry stops validating or the generated module
-drifts. Executed Rust tests additionally reject any hard-coded
-`ruview.*` instrumentation key that is absent from the generated registry.
-Exported resources carry the registry's schema URL so downstream consumers
-can identify the exact conventions version.
+## 事件注册表
 
-Curated events:
+这些名称不是拍脑袋定的:它们定义在经 weaver 校验的语义约定注册表
+`semconv/registry/` 中(属性与日志事件名,OpenTelemetry 注册表格式)。Rust 常量
+模块 `v2/crates/wifi-densepose-sensing-server/src/semconv.rs` 就是由该注册表
+**生成**的(`weaver registry generate`,模板位于 `templates/registry/rust/`),
+CI(`.github/workflows/semconv.yml`)会在注册表校验失败或生成模块发生漂移时直接
+失败。可执行的 Rust 测试还会拒绝任何在生成注册表中不存在的硬编码 `ruview.*`
+埋点键。导出的资源携带注册表的 schema URL,下游消费者借此识别确切的约定版本。
 
-| Event | Emitted when |
+精选事件:
+
+| 事件 | 触发时机 |
 | --- | --- |
-| `ruview.node.online` | first frame from a sensing node (CSI or edge vitals) |
-| `ruview.node.offline` | node evicted after 60 s without frames |
-| `ruview.presence.changed` | smoothed presence classification flips (transition-only) |
-| `ruview.vitals.estimate` | periodic breathing / heart-rate estimate (every 100 ticks) |
-| `ruview.fall.detected` | edge-vitals fall flag rising edge, per node |
-| `ruview.csi.stats` | periodic capture snapshot: frames processed, active nodes |
-| `ruview.mqtt.error` | MQTT publish/connection error in the HA publisher |
-| `ruview.model.loaded` | inference model loaded via the model API |
+| `ruview.node.online` | 感知节点(CSI 或边缘生命体征)发来第一帧 |
+| `ruview.node.offline` | 节点连续 60 秒无帧后被移除 |
+| `ruview.presence.changed` | 平滑后的在场分类翻转(仅状态切换时) |
+| `ruview.vitals.estimate` | 周期性呼吸/心率估计(每 100 个 tick) |
+| `ruview.fall.detected` | 边缘生命体征跌倒标志的上升沿,按节点计 |
+| `ruview.csi.stats` | 周期性采集快照:已处理帧数、活跃节点数 |
+| `ruview.mqtt.error` | HA 发布器中的 MQTT 发布/连接错误 |
+| `ruview.model.loaded` | 通过模型 API 加载推理模型 |
 
-## Enabling export
+## 启用导出
 
-Export is doubly gated so the default build and the default runtime are
-both unaffected:
+导出受双重门禁保护,默认构建与默认运行时均不受影响:
 
-1. **Build** with the `otel` cargo feature (compiles in the OTLP
-   exporter stack, same gating principle as `mqtt`):
+1. **构建**时启用 `otel` cargo 特性(编译进 OTLP 导出器栈,与 `mqtt` 同一门禁
+   原则):
 
    ```sh
    cargo build --release -p wifi-densepose-sensing-server --features mqtt,otel
    ```
 
-2. **Run** with `OTEL_EXPORTER_OTLP_ENDPOINT` set (unset ⇒ the OTLP
-   pipeline is never constructed and logging behaves exactly as before):
+2. **运行**时设置 `OTEL_EXPORTER_OTLP_ENDPOINT`(未设置则 OTLP 流水线根本不会
+   构造,日志行为与从前完全一致):
 
    ```sh
    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
    ./target/release/sensing-server --source simulated
    ```
 
-Use an `https://` collector endpoint outside a trusted local network. The
-`otel` feature includes Rustls and native certificate roots; standard OTLP
-environment variables can supply authentication headers. The Compose example
-uses plaintext only for container-to-container traffic on its private network.
+在可信局域网之外请使用 `https://` 的 collector 端点。`otel` 特性包含 Rustls 与
+系统原生证书根;标准 OTLP 环境变量可以提供认证头。Compose 示例中的明文仅用于
+其私有网络上的容器间流量。
 
-Logs export with resource attribute `service.name = "ruview"` and schema URL
-`https://raw.githubusercontent.com/ruvnet/RuView/main/semconv/schema/ruview-0.1.0.yaml`.
-Curated sensing
-events are emitted only after the configured exporter initializes
-successfully; without it, the pre-existing stderr output is unchanged.
+日志导出携带资源属性 `service.name = "ruview"` 与 schema URL
+`https://raw.githubusercontent.com/ruvnet/RuView/main/semconv/schema/ruview-0.1.0.yaml`。
+精选感知事件只在配置的导出器成功初始化之后才会发出;未启用时,既有的 stderr
+输出保持不变。
 
-## Full stack: `docker compose`
+## 全栈体验:`docker compose`
 
-`docker/otel-compose.yml` brings up the whole pipeline —
-sensing server (synthetic CSI by default) → OpenTelemetry Collector →
-[Ourios](https://github.com/jensholdgaard/ourios), an OTLP-native log
-backend built on Parquet + online log-template mining + DataFusion:
+`docker/otel-compose.yml` 会拉起整条流水线——
+感知服务器(默认合成 CSI)→ OpenTelemetry Collector →
+[Ourios](https://github.com/jensholdgaard/ourios),一个基于 Parquet + 在线日志
+模板挖掘 + DataFusion 的 OTLP 原生日志后端:
 
 ```sh
 docker compose -f docker/otel-compose.yml up
 ```
 
-The collector and backend image tags are pinned to immutable multi-platform
-digests so the demo resolves to the reviewed images.
+collector 与后端镜像标签固定到不可变的多平台 digest,确保 demo 解析到经过审查
+的镜像。
 
-Ourios derives the tenant from `service.name`, so all RuView logs land
-in tenant `ruview`.
+Ourios 从 `service.name` 推导租户,所以所有 RuView 日志都会落入 `ruview` 租户。
 
-## Example queries
+## 查询示例
 
-Ourios mines every log line into a stable `template_id` online at
-ingest, which makes template-level questions cheap. Its query endpoint
-speaks a small logs DSL:
+Ourios 在接入时把每行日志在线归并到稳定的 `template_id`,让模板层面的问题变得
+廉价。它的查询端点说一种小型日志 DSL:
 
-Which log templates dominate RuView's output?
+哪些日志模板主导了 RuView 的输出?
 
 ```sh
 curl -s http://localhost:4319/v1/query \
@@ -97,7 +88,7 @@ curl -s http://localhost:4319/v1/query \
   -d 'severity >= trace | range(-1h, now) | count by template_id | sort count desc | limit 10'
 ```
 
-Recent warnings and errors (fall detections, MQTT failures):
+最近的警告与错误(跌倒检测、MQTT 故障):
 
 ```sh
 curl -s http://localhost:4319/v1/query \
@@ -106,8 +97,8 @@ curl -s http://localhost:4319/v1/query \
   -d 'severity >= warn | limit 50'
 ```
 
-Did a RuView deploy change what the service logs? Template drift between
-two time windows (new / vanished / changed templates):
+某次 RuView 部署有没有改变服务日志的内容?两个时间窗之间的模板漂移
+(新增/消失/变化的模板):
 
 ```sh
 curl -s http://localhost:4319/v1/query \
